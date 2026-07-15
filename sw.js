@@ -1,4 +1,4 @@
-const CACHE = 'pay-splitter-v5';
+const CACHE = 'pay-splitter-v6';
 const ASSETS = [
   './',
   './index.html',

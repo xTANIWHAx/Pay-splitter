@@ -64,6 +64,8 @@
   .cathead{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
   .cathead input{flex:1;min-width:0;background:transparent;border:none;border-bottom:1px solid rgba(255,255,255,.15);
     color:var(--cream);font-family:'Fraunces',serif;font-size:17px;padding:4px 2px;outline:none;}
+  .blocktitle{font-family:'Fraunces',serif;font-size:17px;margin-bottom:10px;color:var(--cream);}
+  .blocktitle small{font-family:'DM Sans',sans-serif;font-size:11.5px;color:var(--muted);font-weight:400;display:block;margin-top:2px;}
   .delcat{flex:none;border:none;background:rgba(201,90,80,.12);color:#e89a92;border-radius:8px;
     font-size:12px;padding:6px 9px;cursor:pointer;font-family:inherit;}
   .item{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:11px;
@@ -74,9 +76,11 @@
   .item-l2{display:flex;align-items:center;gap:8px;margin-top:8px;}
   .exp-amt{display:flex;align-items:center;gap:3px;}
   .exp-amt>span{color:var(--muted);font-size:14px;}
-  .item input.amt{width:78px;text-align:right;background:rgba(255,255,255,.05);
+  .item input.amt,.item input.spct{width:78px;text-align:right;background:rgba(255,255,255,.05);
     border:1px solid rgba(255,255,255,.1);border-radius:8px;color:var(--cream);
     padding:8px;font-size:14px;outline:none;font-family:inherit;}
+  .item input.spct{width:62px;}
+  .pctsign{color:var(--muted);font-size:14px;}
   .item select.freq{flex:none;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
     border-radius:8px;color:var(--cream);padding:8px 6px;font-size:13px;outline:none;font-family:inherit;}
   .item .wk{margin-left:auto;font-size:13px;color:var(--gold);font-weight:600;white-space:nowrap;}
@@ -90,7 +94,6 @@
     color:var(--gold);border-radius:12px;padding:13px;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;}
   .reset{width:100%;margin-top:12px;background:transparent;border:none;color:var(--muted);
     font-size:12px;font-family:inherit;cursor:pointer;text-decoration:underline;padding:6px;}
-  .foot{font-size:12px;color:var(--muted);line-height:1.5;margin-top:22px;text-align:center;}
   input[type=number]{-moz-appearance:textfield;}
   input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
 </style>
@@ -100,8 +103,8 @@
   <div class="eyebrow">Kia ora — pay's in?</div>
   <h1>Where's it all going?</h1>
   <p class="intro">Enter any bill at its real frequency (weekly, monthly, etc.) and it works out the
-  weekly set-aside. Everything you set aside comes off the top, then what's left splits between
-  Spending + Savings however you choose. Saves automatically on this device.</p>
+  weekly set-aside. Everything you set aside comes off the top, then what's left splits between your
+  buckets however you choose. Saves automatically on this device.</p>
 
   <div class="card income">
     <label>This pay</label>
@@ -111,7 +114,7 @@
 
   <div class="card splitcard" id="splitCard" style="display:none">
     <div class="splithead"><span class="t">Split what's left over</span>
-      <span class="splitsub">Spend / Save</span></div>
+      <span class="splitsub" id="splitSub">Spend / Save</span></div>
     <div class="chips" id="splitChips"></div>
   </div>
 
@@ -119,22 +122,24 @@
   <div id="accounts"></div>
   <div class="total" id="totalRow"><span>Total distributed</span><b id="totalOut">$0.00</b></div>
 
-  <button class="toggle" id="toggle">Set up categories &amp; amounts</button>
+  <button class="toggle" id="toggle">Set up budget</button>
   <div class="editor" id="editor">
     <div id="catList"></div>
     <button class="addcat" id="addCat">+ Add a category</button>
+    <div id="splitEdit"></div>
     <button class="reset" id="reset">Reset everything</button>
   </div>
-
 </div>
 
 <script>
 const KEY='pay-splitter';
+const clone=o=>JSON.parse(JSON.stringify(o));
 const fmt=c=>new Intl.NumberFormat('en-NZ',{style:'currency',currency:'NZD',minimumFractionDigits:2}).format(c/100);
 const toCents=v=>Math.round((parseFloat(v)||0)*100);
 const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 const PALETTE=['#8fb39a','#c98a5e','#6ea3b0','#b08fc4','#c4a96e'];
-const SPLITS=[80,70,60,50,40,30,20]; // spending share of the leftover (%)
+const SPLIT_PALETTE=['#d9a441','#9d8fc4','#6ea3b0','#8fb39a','#c98a5e'];
+const SPLITS=[80,70,60,50,40,30,20]; // quick presets (spending share %)
 
 const FREQS={
   weekly:{lbl:'weekly',short:'wk',div:1},
@@ -145,56 +150,66 @@ const FREQS={
 };
 const weeklyCents=it=>Math.round(it.amountCents/(FREQS[it.freq]||FREQS.weekly).div);
 
-const DEFAULTS={income:'',spendPct:50,categories:[
-  {name:'Bills & Expenses',note:'Stays put to cover your regular bills',items:[
-    {label:'',amountCents:0,freq:'weekly'}]},
-  {name:'Set-aside Funds',note:'Building up for bigger bills (rates, rego, WOF…)',items:[
-    {label:'',amountCents:0,freq:'weekly'}]}
-]};
+const DEFAULTS={income:'',
+  splits:[{name:'Spending',pct:50},{name:'Savings',pct:50}],
+  categories:[
+    {name:'Bills & Expenses',note:'Stays put to cover your regular bills',items:[{label:'',amountCents:0,freq:'weekly'}]},
+    {name:'Set-aside Funds',note:'Building up for bigger bills (rates, rego, WOF…)',items:[{label:'',amountCents:0,freq:'weekly'}]}
+  ]};
 
 let state=load();
 
 function load(){
   try{const s=JSON.parse(localStorage.getItem(KEY));
-    if(s&&s.categories){if(typeof s.spendPct!=='number')s.spendPct=50;return s;}}catch(e){}
-  return JSON.parse(JSON.stringify(DEFAULTS));
+    if(s&&s.categories){
+      if(!Array.isArray(s.splits)){
+        const sp=typeof s.spendPct==='number'?s.spendPct:50;
+        s.splits=[{name:'Spending',pct:sp},{name:'Savings',pct:100-sp}];
+      }
+      delete s.spendPct;
+      return s;
+    }}catch(e){}
+  return clone(DEFAULTS);
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}}
 const $=id=>document.getElementById(id);
 const catWeekly=c=>c.items.reduce((a,it)=>a+weeklyCents(it),0);
+const getRemainder=()=>toCents(state.income)-state.categories.reduce((a,c)=>a+catWeekly(c),0);
+const pctTotal=()=>state.splits.reduce((a,s)=>a+(s.pct||0),0);
 
-function renderSplit(){
-  $('splitChips').innerHTML=SPLITS.map(p=>
-    `<button class="chip${p===state.spendPct?' on':''}" data-p="${p}">${p} / ${100-p}</button>`).join('');
+function splitAmounts(remainder){
+  if(remainder<=0)return state.splits.map(()=>0);
+  const amts=state.splits.map(s=>Math.round(remainder*(s.pct||0)/100));
+  if(pctTotal()===100&&amts.length){ // make it land exactly on the leftover
+    const others=amts.slice(0,-1).reduce((a,v)=>a+v,0);
+    amts[amts.length-1]=remainder-others;
+  }
+  return amts;
 }
 
 function renderSummary(){
   const incomeC=toCents(state.income);
-  $('splitCard').style.display=incomeC>0?'block':'none';
+  const twoBuckets=state.splits.length===2;
+  $('splitCard').style.display=(incomeC>0&&twoBuckets)?'block':'none';
+  if(incomeC>0&&twoBuckets)renderChips();
 
   if(incomeC<=0){
     $('accounts').innerHTML=`<div class="card empty">
       <h2>Let's split your pay</h2>
-      <p>Pop your pay in up top, then set up your bills and savings below.
+      <p>Pop your pay in up top, then set up your bills and buckets below.
       We'll show you exactly where every dollar goes.</p>
-      <button id="startBtn">Set up my budget</button>
-    </div>`;
-    $('totalOut').textContent='$0.00';
-    $('warn').style.display='none';
+      <button id="startBtn">Set up my budget</button></div>`;
+    $('totalOut').textContent='$0.00';$('warn').style.display='none';
     const sb=$('startBtn');
-    if(sb)sb.addEventListener('click',()=>{
-      $('editor').classList.add('open');
-      $('toggle').textContent='Hide categories & amounts';
-      $('editor').scrollIntoView({behavior:'smooth'});
-    });
+    if(sb)sb.addEventListener('click',()=>{$('editor').classList.add('open');
+      $('toggle').textContent='Hide budget';$('editor').scrollIntoView({behavior:'smooth'});});
     return;
   }
 
   const setAside=state.categories.reduce((a,c)=>a+catWeekly(c),0);
   const remainder=incomeC-setAside;
-  const spendPct=state.spendPct;
-  const spending=remainder>0?Math.round(remainder*spendPct/100):0;
-  const savings=remainder>0?remainder-spending:0;
+  const amts=splitAmounts(remainder);
+  const tot=pctTotal();
 
   let html='';
   state.categories.forEach((c,i)=>{
@@ -211,20 +226,28 @@ function renderSummary(){
       ${items?`<div class="items">${items}</div>`:''}</div>`;
   });
   const n=state.categories.length;
-  [['Spending',`Your everyday / fun money · ${spendPct}% of what's left`,spending,'#d9a441'],
-   ['Savings',`Emergency fund + goals · ${100-spendPct}% of what's left`,savings,'#9d8fc4']]
-   .forEach((a,j)=>{
-    html+=`<div class="card acct" style="border-left-color:${a[3]};animation-delay:${(n+j)*0.05}s">
-      <div class="top"><span class="name">${a[0]}</span>
-        <span class="amt" style="color:${a[3]}">${fmt(a[2])}</span></div>
-      <div class="note">${a[1]}</div></div>`;
+  state.splits.forEach((s,j)=>{
+    const col=SPLIT_PALETTE[j%SPLIT_PALETTE.length];
+    html+=`<div class="card acct" style="border-left-color:${col};animation-delay:${(n+j)*0.05}s">
+      <div class="top"><span class="name">${esc(s.name)||'Bucket'}</span>
+        <span class="amt" style="color:${col}">${fmt(amts[j]||0)}</span></div>
+      <div class="note">${s.pct||0}% of what's left</div></div>`;
   });
   $('accounts').innerHTML=html;
-  $('totalOut').textContent=fmt(setAside+spending+savings);
+  $('totalOut').textContent=fmt(setAside+amts.reduce((a,v)=>a+v,0));
 
-  if(remainder<0){$('warn').style.display='block';
-    $('warn').textContent=`That's ${fmt(-remainder)} more than your pay covers. Add more income or trim something below.`;}
-  else{$('warn').style.display='none';}
+  let w='';
+  if(remainder<0)w=`That's ${fmt(-remainder)} more than your pay covers. Add income or trim something below.`;
+  else if(tot>100)w=`Your buckets add up to ${tot}% — trim them back to 100% so nothing's over-allocated.`;
+  else if(tot<100&&tot>0)w=`Your buckets add up to ${tot}% — ${fmt(Math.round(remainder*(100-tot)/100))} a week is left unassigned.`;
+  if(w){$('warn').style.display='block';$('warn').textContent=w;}else $('warn').style.display='none';
+}
+
+function renderChips(){
+  $('splitSub').textContent=`${state.splits[0].name||'A'} / ${state.splits[1].name||'B'}`;
+  const cur=state.splits[0].pct;
+  $('splitChips').innerHTML=SPLITS.map(p=>
+    `<button class="chip${p===cur?' on':''}" data-p="${p}">${p} / ${100-p}</button>`).join('');
 }
 
 function freqOptions(sel){
@@ -251,8 +274,7 @@ function renderEditor(){
       <div class="cathead">
         <input class="catname" data-c="${ci}" value="${esc(c.name)}" placeholder="Category name" />
         <button class="delcat" data-c="${ci}">Remove</button>
-      </div>
-      ${rows}
+      </div>${rows}
       <button class="additem" data-c="${ci}">+ Add item</button>
       <div class="cattotal"><span>Category total / week</span><b>${fmt(catWeekly(c))}</b></div>
     </div>`;
@@ -260,6 +282,38 @@ function renderEditor(){
   $('catList').innerHTML=html;
 }
 
+function renderSplitEditor(){
+  const rem=getRemainder();
+  const amts=splitAmounts(rem);
+  const tot=pctTotal();
+  const rows=state.splits.map((s,i)=>`
+    <div class="item">
+      <div class="item-l1">
+        <input class="sname" data-i="${i}" value="${esc(s.name)}" placeholder="Bucket name (e.g. Spending)" />
+        ${state.splits.length>1?`<button class="sdel del" data-i="${i}" title="Remove">&times;</button>`:''}
+      </div>
+      <div class="item-l2">
+        <input class="spct" data-i="${i}" type="number" inputmode="numeric" value="${s.pct||0}" />
+        <span class="pctsign">%</span>
+        <span class="wk">= ${fmt(rem>0?(amts[i]||0):0)}/wk</span>
+      </div>
+    </div>`).join('');
+  $('splitEdit').innerHTML=`<div class="catblock">
+    <div class="blocktitle">Leftover split<small>How to divide whatever's left after your categories. Aim for 100% total.</small></div>
+    ${rows}
+    <button class="additem" id="addBucket">+ Add a bucket</button>
+    <div class="cattotal"><span>Total</span><b id="splitTot" style="color:${tot===100?'var(--cream)':'#e8b04a'}">${tot}%</b></div>
+  </div>`;
+}
+
+function updateSplitReadouts(){
+  const rem=getRemainder();const amts=splitAmounts(rem);const tot=pctTotal();
+  $('splitEdit').querySelectorAll('.item').forEach((el,i)=>{
+    const wk=el.querySelector('.wk');if(wk)wk.textContent='= '+fmt(rem>0?(amts[i]||0):0)+'/wk';});
+  const tt=$('splitTot');if(tt){tt.textContent=tot+'%';tt.style.color=tot===100?'var(--cream)':'#e8b04a';}
+}
+
+// category editing
 function onEditorInput(e){
   const t=e.target,ci=+t.dataset.c;
   if(t.classList.contains('catname')){state.categories[ci].name=t.value;save();renderSummary();return;}
@@ -269,46 +323,63 @@ function onEditorInput(e){
   else if(t.classList.contains('freq'))state.categories[ci].items[ii].freq=t.value;
   else return;
   const item=t.closest('.item');
-  if(item){const wk=item.querySelector('.wk');
-    if(wk)wk.textContent='= '+fmt(weeklyCents(state.categories[ci].items[ii]))+'/wk';}
+  if(item){const wk=item.querySelector('.wk');if(wk)wk.textContent='= '+fmt(weeklyCents(state.categories[ci].items[ii]))+'/wk';}
   const blk=t.closest('.catblock');
-  if(blk){const ct=blk.querySelector('.cattotal b');
-    if(ct)ct.textContent=fmt(catWeekly(state.categories[ci]));}
-  save();renderSummary();
+  if(blk){const ct=blk.querySelector('.cattotal b');if(ct)ct.textContent=fmt(catWeekly(state.categories[ci]));}
+  save();renderSummary();updateSplitReadouts();
 }
 $('catList').addEventListener('input',onEditorInput);
 $('catList').addEventListener('change',onEditorInput);
 $('catList').addEventListener('click',e=>{
   const t=e.target,ci=+t.dataset.c;
-  if(t.classList.contains('delcat')){state.categories.splice(ci,1);}
-  else if(t.classList.contains('del')){state.categories[ci].items.splice(+t.dataset.i,1);}
-  else if(t.classList.contains('additem')){state.categories[ci].items.push({label:'',amountCents:0,freq:'weekly'});}
+  if(t.classList.contains('delcat'))state.categories.splice(ci,1);
+  else if(t.classList.contains('del'))state.categories[ci].items.splice(+t.dataset.i,1);
+  else if(t.classList.contains('additem'))state.categories[ci].items.push({label:'',amountCents:0,freq:'weekly'});
   else return;
-  save();renderEditor();renderSummary();
+  save();renderEditor();renderSummary();updateSplitReadouts();
 });
+
+// split-bucket editing
+$('splitEdit').addEventListener('input',e=>{
+  const t=e.target,i=+t.dataset.i;
+  if(t.classList.contains('sname')){state.splits[i].name=t.value;save();renderSummary();return;}
+  if(t.classList.contains('spct')){
+    let v=Math.round(parseFloat(t.value)||0);v=Math.max(0,Math.min(100,v));
+    state.splits[i].pct=v;save();updateSplitReadouts();renderSummary();
+  }
+});
+$('splitEdit').addEventListener('click',e=>{
+  const t=e.target;
+  if(t.id==='addBucket'){state.splits.push({name:'',pct:0});}
+  else if(t.classList.contains('sdel')){if(state.splits.length>1)state.splits.splice(+t.dataset.i,1);}
+  else return;
+  save();renderSplitEditor();renderSummary();
+});
+
 $('addCat').addEventListener('click',()=>{
   state.categories.push({name:'',note:'',items:[{label:'',amountCents:0,freq:'weekly'}]});
-  save();renderEditor();renderSummary();
+  save();renderEditor();renderSummary();updateSplitReadouts();
 });
 $('reset').addEventListener('click',()=>{
   if(confirm('Clear everything and start fresh?')){
-    state=JSON.parse(JSON.stringify(DEFAULTS));
-    $('income').value='';save();renderEditor();renderSplit();renderSummary();
+    state=clone(DEFAULTS);$('income').value='';
+    save();renderEditor();renderSplitEditor();renderSummary();
   }
-});
-$('splitChips').addEventListener('click',e=>{
-  const p=e.target.dataset.p;if(!p)return;
-  state.spendPct=+p;save();renderSplit();renderSummary();
 });
 
 $('income').value=state.income;
-$('income').addEventListener('input',e=>{state.income=e.target.value;save();renderSummary();});
+$('income').addEventListener('input',e=>{state.income=e.target.value;save();renderSummary();updateSplitReadouts();});
+$('splitChips').addEventListener('click',e=>{
+  const p=e.target.dataset.p;if(!p)return;
+  state.splits[0].pct=+p;state.splits[1].pct=100-+p;
+  save();renderSummary();renderSplitEditor();
+});
 $('toggle').addEventListener('click',()=>{
   const ed=$('editor');ed.classList.toggle('open');
-  $('toggle').textContent=(ed.classList.contains('open')?'Hide':'Set up')+' categories & amounts';
+  $('toggle').textContent=ed.classList.contains('open')?'Hide budget':'Set up budget';
 });
 
-renderSplit();renderEditor();renderSummary();
+renderEditor();renderSplitEditor();renderSummary();
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
 </script>
 </body>
